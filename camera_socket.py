@@ -1,43 +1,46 @@
-from picamera2 import Picamera2
-import cv2, socket, base64, time
-import numpy as np
+import cv2
+import socket
+import base64
 
+# Set up socket for streaming
 BUFF_SIZE = 65536
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, BUFF_SIZE)
 
-host_ip = '172.17.0.1'  # Replace with your wifi's IP
+# Replace with Jetson Nano’s IP
+host_ip = '192.168.1.100'  # Change to your Jetson Nano's IP
 port = 8888
 server_socket.bind((host_ip, port))
-print('Server listening at:', (host_ip, port))
+print(f"Server listening on {host_ip}:{port}")
 
-picam2 = Picamera2()
-picam2.configure(picam2.create_preview_configuration(main={"size": (640,480)}))  # Smaller size for stability
-picam2.start()
+# Open Camera (PiCamera or USB Camera)
+cap = cv2.VideoCapture(0)  # Use 0 for default camera
+
+# Adjust frame size for better performance
+cap.set(3, 640)  # Width
+cap.set(4, 480)  # Height
 
 try:
-    print("Waiting for a client...")
     while True:
-        msg, client_addr = server_socket.recvfrom(BUFF_SIZE)
-        print('Connection from:', client_addr)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        
+        # Encode frame
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        message = base64.b64encode(buffer)
 
-        while True:
-            frame = picam2.capture_array()
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])  # Lower quality for smaller size
-            message = base64.b64encode(buffer)
+        # Ensure packet size is within limit
+        if len(message) > BUFF_SIZE:
+            print("Frame size too large, adjust resolution or quality.")
+            continue
 
-            # Ensure packet size is within limit
-            if len(message) > BUFF_SIZE:
-                print("Frame size too large, adjust resolution or quality.")
-                continue
-
-            server_socket.sendto(message, client_addr)
+        # Send frame to client
+        server_socket.sendto(message, ('<client-ip>', 9999))  # Replace with client IP
 
 except KeyboardInterrupt:
-    print("\nServer stopped by user.")
+    print("\nServer stopped.")
 
 finally:
-    picam2.stop()
+    cap.release()
     server_socket.close()
-    print("Resources released.")
